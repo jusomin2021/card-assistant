@@ -1,0 +1,456 @@
+// Default Application State
+const DEFAULT_STATE = {
+  config: {
+    jpyRate: 0.20,
+    ipassLimit: 2000,
+    pxpayLimit: 3000,
+    uniLimit: 6250,
+    fubonLimit: 33333
+  },
+  transactions: []
+};
+
+let appState = JSON.parse(localStorage.getItem('CARD_ASSISTANT_STATE')) || DEFAULT_STATE;
+let isRecommendPayPay = true;
+
+// Initialize App
+document.addEventListener('DOMContentLoaded', () => {
+  initDates();
+  loadConfigToInputs();
+  renderAll();
+  registerServiceWorker();
+});
+
+function saveState() {
+  localStorage.setItem('CARD_ASSISTANT_STATE', JSON.stringify(appState));
+  renderAll();
+}
+
+function initDates() {
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('tx-date').value = today;
+}
+
+function loadConfigToInputs() {
+  document.getElementById('cfg-rate').value = appState.config.jpyRate;
+  document.getElementById('cfg-ipass-limit').value = appState.config.ipassLimit;
+  document.getElementById('cfg-pxpay-limit').value = appState.config.pxpayLimit;
+  document.getElementById('cfg-uni-limit').value = appState.config.uniLimit;
+  document.getElementById('cfg-fubon-limit').value = appState.config.fubonLimit;
+}
+
+function saveSettings() {
+  appState.config.jpyRate = parseFloat(document.getElementById('cfg-rate').value) || 0.20;
+  appState.config.ipassLimit = parseFloat(document.getElementById('cfg-ipass-limit').value) || 2000;
+  appState.config.pxpayLimit = parseFloat(document.getElementById('cfg-pxpay-limit').value) || 3000;
+  appState.config.uniLimit = parseFloat(document.getElementById('cfg-uni-limit').value) || 6250;
+  appState.config.fubonLimit = parseFloat(document.getElementById('cfg-fubon-limit').value) || 33333;
+  saveState();
+  alert('設定已成功儲存！');
+}
+
+// Navigation Tabs
+function switchTab(tabId) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab-item').forEach(el => el.classList.remove('active'));
+  
+  document.getElementById(`tab-${tabId}`).classList.add('active');
+  
+  const titleMap = {
+    dashboard: '儀表板',
+    recommend: '智慧推薦',
+    history: '消費明細',
+    settings: '統計與設定'
+  };
+  document.getElementById('page-title').innerText = titleMap[tabId];
+
+  const indexMap = { dashboard: 0, recommend: 1, history: 2, settings: 3 };
+  document.querySelectorAll('.tab-item')[indexMap[tabId]].classList.add('active');
+}
+
+// Data Calculations
+function calculateMetrics() {
+  const rate = appState.config.jpyRate;
+  
+  // Totals per tool
+  const totals = {
+    ipass: 0,
+    pxpay: 0,
+    taishin: 0,
+    uniopen: 0,
+    fubon_j: 0
+  };
+
+  let totalSpentTwd = 0;
+  let monthSpentTwd = 0;
+  let quarterSpentTwd = 0;
+
+  const now = new Date();
+  const currentMonth = now.getMonth();
+  const currentQuarter = Math.floor(currentMonth / 3);
+
+  appState.transactions.forEach(tx => {
+    const twd = tx.currency === 'JPY' ? Math.round(tx.amount * rate) : tx.amount;
+    totals[tx.payment] += twd;
+    totalSpentTwd += twd;
+
+    const txDate = new Date(tx.date);
+    if (txDate.getMonth() === currentMonth && txDate.getFullYear() === now.getFullYear()) {
+      monthSpentTwd += twd;
+    }
+    if (Math.floor(txDate.getMonth() / 3) === currentQuarter && txDate.getFullYear() === now.getFullYear()) {
+      quarterSpentTwd += twd;
+    }
+  });
+
+  // Rewards calculation
+  // 1. iPASS MONEY: Base 3.5% (Max 150pt) + First Month PayPay Bonus 10% (Max 200pt, spend limit ~2000 TWD)
+  const ipassBase = Math.min(150, Math.round(totals.ipass * 0.035));
+  const ipassBonus = totals.ipass > 0 ? Math.min(200, Math.round(Math.min(totals.ipass, appState.config.ipassLimit) * 0.10)) : 0;
+  const ipassEarned = ipassBase + ipassBonus;
+  const ipassMaxEarn = 350;
+
+  // 2. 全支付: Base 3.5% (Max 30/tx, Max 120/mo) + NT$3000 Single TX Bonus 4% (Max 120)
+  const pxpayBase = Math.min(120, Math.round(totals.pxpay * 0.035));
+  const hasPxpay3000 = appState.transactions.some(tx => tx.payment === 'pxpay' && (tx.currency === 'JPY' ? tx.amount * rate : tx.amount) >= appState.config.pxpayLimit);
+  const pxpayBonus = hasPxpay3000 ? 120 : 0;
+  const pxpayEarned = pxpayBase + pxpayBonus;
+  const pxpayMaxEarn = 240;
+
+  // 3. 台新 Pay+: 3.8%
+  const taishinEarned = Math.round(totals.taishin * 0.038);
+
+  // 4. 中信 uniopen: 2%+1%+8% (8% Max 500pt @ $6250 TWD)
+  const uniopenBase = Math.round(totals.uniopen * 0.03);
+  const uniopenBonus = Math.min(500, Math.round(totals.uniopen * 0.08));
+  const uniopenEarned = uniopenBase + uniopenBonus;
+
+  // 5. 富邦 J: 3% Base + 3% Bonus (Max 1000/quarter @ $33333 TWD)
+  const fubonBase = Math.round(totals.fubon_j * 0.03);
+  const fubonBonus = Math.min(1000, Math.round(totals.fubon_j * 0.03));
+  const fubonEarned = fubonBase + fubonBonus;
+
+  const totalEarned = ipassEarned + pxpayEarned + taishinEarned + uniopenEarned + fubonEarned;
+
+  return {
+    totals,
+    totalSpentTwd,
+    monthSpentTwd,
+    quarterSpentTwd,
+    totalEarned,
+    ipass: { spent: totals.ipass, earned: ipassEarned, maxEarn: ipassMaxEarn, done: totals.ipass >= appState.config.ipassLimit },
+    pxpay: { spent: totals.pxpay, earned: pxpayEarned, maxEarn: pxpayMaxEarn, done: hasPxpay3000 },
+    taishin: { spent: totals.taishin, earned: taishinEarned },
+    uniopen: { spent: totals.uniopen, earned: uniopenEarned, maxBonusSpent: appState.config.uniLimit, done: totals.uniopen >= appState.config.uniLimit },
+    fubon_j: { spent: totals.fubon_j, earned: fubonEarned, maxBonusSpent: appState.config.fubonLimit, done: totals.fubon_j >= appState.config.fubonLimit }
+  };
+}
+
+// Render All UI Components
+function renderAll() {
+  const m = calculateMetrics();
+
+  // Render Dashboard Recommendation
+  renderHeroRecommend(m);
+
+  // Render Progress Cards
+  renderProgressCards(m);
+
+  // Render History List
+  renderHistoryList();
+
+  // Render Stats
+  document.getElementById('stat-total-spent').innerText = `NT$ ${m.totalSpentTwd.toLocaleString()}`;
+  document.getElementById('stat-total-earned').innerText = `NT$ ${m.totalEarned.toLocaleString()}`;
+  document.getElementById('stat-month-spent').innerText = `NT$ ${m.monthSpentTwd.toLocaleString()}`;
+  document.getElementById('stat-quarter-spent').innerText = `NT$ ${m.quarterSpentTwd.toLocaleString()}`;
+
+  // Recalculate Smart Recommendation Tool
+  calculateRecommendation();
+}
+
+function renderHeroRecommend(m) {
+  let cardName = "";
+  let reason = "";
+
+  if (!m.ipass.done) {
+    cardName = "iPASS MONEY (PayPay)";
+    reason = `首刷加碼 10% 尚未達標！建議優先刷 NT$ ${appState.config.ipassLimit}（享高達 13.5% 回饋）。目前已刷 NT$ ${m.ipass.spent}。`;
+  } else if (!m.pxpay.done) {
+    cardName = "全支付 (PayPay)";
+    reason = `單筆滿 NT$ ${appState.config.pxpayLimit} 加碼 4% 活動尚未完成。若有大額 PayPay 消費請優先使用全支付！`;
+  } else if (!m.uniopen.done) {
+    cardName = "中信 uniopen (實體卡)";
+    reason = `海外實體刷卡首選！8% 加碼未滿 NT$ ${appState.config.uniLimit}（享 11% 超高回饋）。目前已刷 NT$ ${m.uniopen.spent}。`;
+  } else {
+    cardName = "台新 Pay+ / 富邦 J 卡";
+    reason = `高額加碼皆已達標！PayPay 請用台新 Pay+ (3.8%)，海外實體請用富邦 J 卡 (6%)。`;
+  }
+
+  document.getElementById('hero-recommend-title').innerText = cardName;
+  document.getElementById('hero-recommend-reason').innerText = reason;
+}
+
+function renderProgressCards(m) {
+  const container = document.getElementById('tools-progress-list');
+  
+  const tools = [
+    {
+      name: "iPASS MONEY (PayPay)",
+      spent: m.ipass.spent,
+      target: appState.config.ipassLimit,
+      earned: m.ipass.earned,
+      maxEarn: m.ipass.maxEarn,
+      status: m.ipass.done ? "已完成加碼" : "進行中",
+      isDone: m.ipass.done
+    },
+    {
+      name: "全支付 (PayPay)",
+      spent: m.pxpay.spent,
+      target: appState.config.pxpayLimit,
+      earned: m.pxpay.earned,
+      maxEarn: m.pxpay.maxEarn,
+      status: m.pxpay.done ? "滿額禮已完成" : "登錄加碼中",
+      isDone: m.pxpay.done
+    },
+    {
+      name: "台新 Pay+ (PayPay)",
+      spent: m.taishin.spent,
+      target: "無上限",
+      earned: m.taishin.earned,
+      maxEarn: "3.8% 無上限",
+      status: "一般主力",
+      isDone: false
+    },
+    {
+      name: "中信 uniopen (實體刷卡)",
+      spent: m.uniopen.spent,
+      target: m.uniopen.maxBonusSpent,
+      earned: m.uniopen.earned,
+      maxEarn: "11% 最高",
+      status: m.uniopen.done ? "8% 加碼已滿" : "進行中",
+      isDone: m.uniopen.done
+    },
+    {
+      name: "富邦 J 卡 (實體刷卡)",
+      spent: m.fubon_j.spent,
+      target: m.fubon_j.maxBonusSpent,
+      earned: m.fubon_j.earned,
+      maxEarn: "季加碼 1,000",
+      status: m.fubon_j.done ? "加碼上限已滿" : "備用主力",
+      isDone: m.fubon_j.done
+    }
+  ];
+
+  container.innerHTML = tools.map(t => {
+    const percent = typeof t.target === 'number' ? Math.min(100, Math.round((t.spent / t.target) * 100)) : 100;
+    return `
+      <div class="card tool-card">
+        <div class="tool-header">
+          <span class="tool-name">${t.name}</span>
+          <span class="tool-status-tag ${t.isDone ? 'status-done' : 'status-active'}">${t.status}</span>
+        </div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" style="width: ${percent}%;"></div>
+        </div>
+        <div class="tool-metrics">
+          <div>已刷: <strong>NT$ ${t.spent.toLocaleString()}</strong></div>
+          <div>已獲回饋: <strong>NT$ ${t.earned.toLocaleString()}</strong></div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderHistoryList() {
+  const container = document.getElementById('history-list');
+  const countEl = document.getElementById('history-count');
+  
+  countEl.innerText = `${appState.transactions.length} 筆`;
+
+  if (appState.transactions.length === 0) {
+    container.innerHTML = `<div class="card" style="text-align:center; color: var(--text-secondary);">尚無消費紀錄</div>`;
+    return;
+  }
+
+  const rate = appState.config.jpyRate;
+  const payNames = {
+    ipass: "iPASS MONEY",
+    pxpay: "全支付",
+    taishin: "台新 Pay+",
+    uniopen: "中信 uniopen",
+    fubon_j: "富邦 J 卡"
+  };
+
+  container.innerHTML = appState.transactions.map((tx, idx) => {
+    const twd = tx.currency === 'JPY' ? Math.round(tx.amount * rate) : tx.amount;
+    return `
+      <div class="card tx-card">
+        <div class="tx-main">
+          <h4>${escapeHtml(tx.merchant)}</h4>
+          <div class="tx-sub">${tx.date} • ${payNames[tx.payment]} ${tx.note ? '• ' + escapeHtml(tx.note) : ''}</div>
+        </div>
+        <div class="tx-amount-box">
+          <div class="tx-twd">NT$ ${twd.toLocaleString()}</div>
+          <div class="tx-reward">${tx.currency === 'JPY' ? `¥${tx.amount.toLocaleString()}` : ''}</div>
+          <button style="background:none; border:none; color:var(--accent-red); font-size:12px; margin-top:4px; cursor:pointer;" onclick="deleteTransaction(${idx})">刪除</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// Smart Recommendation Logic
+function setRecommendPayPay(val) {
+  isRecommendPayPay = val;
+  document.querySelectorAll('.segment-btn').forEach(btn => {
+    btn.classList.toggle('active', (btn.dataset.paypay === 'true') === val);
+  });
+  calculateRecommendation();
+}
+
+function calculateRecommendation() {
+  const rawAmt = parseFloat(document.getElementById('rec-amount').value) || 0;
+  const curr = document.getElementById('rec-currency').value;
+  const rate = appState.config.jpyRate;
+  const amtTwd = curr === 'JPY' ? Math.round(rawAmt * rate) : rawAmt;
+
+  document.getElementById('rec-twd-amount').innerText = `NT$ ${amtTwd.toLocaleString()}`;
+
+  const m = calculateMetrics();
+  let recName = "";
+  let recReason = "";
+
+  if (isRecommendPayPay) {
+    if (m.ipass.spent < appState.config.ipassLimit) {
+      recName = "iPASS MONEY";
+      recReason = `iPASS MONEY 首刷滿額加碼 10% 尚未達到 (目前 NT$ ${m.ipass.spent} / NT$ ${appState.config.ipassLimit})，刷此筆可賺取高達 13.5% 回饋！`;
+    } else if (!m.pxpay.done && amtTwd >= appState.config.pxpayLimit) {
+      recName = "全支付";
+      recReason = `此筆消費達到全支付單筆滿 NT$ ${appState.config.pxpayLimit} 門檻，可順利解鎖加碼 4% (額外 120 點)！`;
+    } else {
+      recName = "台新 Pay+";
+      recReason = `iPASS 及全支付活動已滿足，台新 Pay+ 為 PayPay 一般消費主力，享 3.8% 無上限回饋！`;
+    }
+  } else {
+    if (m.uniopen.spent < appState.config.uniLimit) {
+      recName = "中信 uniopen";
+      recReason = `海外實體刷卡優先使用中信 uniopen，享 11% 超高回饋 (8% 加碼上限 NT$ 500，額度尚有 NT$ ${(appState.config.uniLimit - m.uniopen.spent).toLocaleString()})。`;
+    } else {
+      recName = "富邦 J 卡";
+      recReason = `中信 uniopen 加碼額度已滿，改用富邦 J 卡享 6% 回饋（一季上限 NT$ 33,333）。`;
+    }
+  }
+
+  document.getElementById('rec-card-name').innerText = recName;
+  document.getElementById('rec-card-reason').innerText = recReason;
+}
+
+// Transaction Handlers
+function handleAddTransaction(e) {
+  e.preventDefault();
+  
+  const date = document.getElementById('tx-date').value;
+  const merchant = document.getElementById('tx-merchant').value;
+  const amount = parseFloat(document.getElementById('tx-amount').value);
+  const currency = document.getElementById('tx-currency').value;
+  const payment = document.getElementById('tx-payment').value;
+  const note = document.getElementById('tx-note').value;
+
+  if (!date || !merchant || isNaN(amount) || amount <= 0) {
+    alert('請填寫完整正確的消費資訊');
+    return;
+  }
+
+  appState.transactions.unshift({
+    date,
+    merchant,
+    amount,
+    currency,
+    payment,
+    note
+  });
+
+  saveState();
+  closeAddModal();
+  document.getElementById('add-tx-form').reset();
+  initDates();
+}
+
+function deleteTransaction(index) {
+  if (confirm('確定要刪除這筆消費紀錄嗎？')) {
+    appState.transactions.splice(index, 1);
+    saveState();
+  }
+}
+
+function updateConvertedPreview() {
+  const amt = parseFloat(document.getElementById('tx-amount').value) || 0;
+  const curr = document.getElementById('tx-currency').value;
+  const rate = appState.config.jpyRate;
+  const twd = curr === 'JPY' ? Math.round(amt * rate) : amt;
+  document.getElementById('tx-converted-preview').innerText = `約合台幣：NT$ ${twd.toLocaleString()}`;
+}
+
+// Modal Toggle
+document.getElementById('btn-open-add').addEventListener('click', () => {
+  document.getElementById('modal-add').classList.add('active');
+});
+
+function closeAddModal() {
+  document.getElementById('modal-add').classList.remove('active');
+}
+
+// Backup & Restore
+function exportData() {
+  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(appState, null, 2));
+  const downloadAnchor = document.createElement('a');
+  downloadAnchor.setAttribute("href", dataStr);
+  downloadAnchor.setAttribute("download", `card_assistant_backup_${new Date().toISOString().split('T')[0]}.json`);
+  document.body.appendChild(downloadAnchor);
+  downloadAnchor.click();
+  downloadAnchor.remove();
+}
+
+function importData(event) {
+  const fileReader = new FileReader();
+  fileReader.onload = function(e) {
+    try {
+      const importedState = JSON.parse(e.target.result);
+      if (importedState && importedState.config && Array.isArray(importedState.transactions)) {
+        appState = importedState;
+        saveState();
+        loadConfigToInputs();
+        alert('成功匯入備份資料！');
+      } else {
+        alert(' JSON 格式不符');
+      }
+    } catch (err) {
+      alert('解析備份檔案失敗');
+    }
+  };
+  fileReader.readAsText(event.target.files[0]);
+}
+
+function resetAllData() {
+  if (confirm('警告：這將會清除所有消費紀錄與自訂設定！確定重設嗎？')) {
+    localStorage.removeItem('CARD_ASSISTANT_STATE');
+    appState = JSON.parse(JSON.stringify(DEFAULT_STATE));
+    saveState();
+    loadConfigToInputs();
+    alert('已還原為初始設定。');
+  }
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// Service Worker Registration
+function registerServiceWorker() {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js')
+      .then(() => console.log('Service Worker Registered'))
+      .catch(err => console.error('SW Registration Failed:', err));
+  }
+}
