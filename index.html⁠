@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <title>信用卡回饋助手</title>
+  
+  <!-- iOS PWA Meta Tags -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="回饋助手">
+  <meta name="theme-color" content="#000000">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- App Header -->
+  <header class="app-header">
+    <h1 id="page-title">儀表板</h1>
+    <button class="btn-icon" id="btn-open-add">+ 新增消費</button>
+  </header>
+
+  <!-- Main Scrollable Content Container -->
+  <main class="content-container">
+
+    <!-- TAB 1: 儀表板 Dashboard -->
+    <section id="tab-dashboard" class="tab-content active">
+      
+      <!-- 今日智慧推薦卡片 -->
+      <div class="card hero-card">
+        <div class="card-badge">今日智慧推薦</div>
+        <h2 id="hero-recommend-title">計算中...</h2>
+        <p id="hero-recommend-reason" class="hero-reason"></p>
+        <div class="hero-actions">
+          <button class="btn-primary-light" onclick="switchTab('recommend')">即時推薦算盤 →</button>
+        </div>
+      </div>
+
+      <!-- 回饋進度總覽 -->
+      <h3 class="section-title">支付工具進度總覽</h3>
+      <div id="tools-progress-list" class="cards-stack">
+        <!-- JS 動態渲染卡片 -->
+      </div>
+    </section>
+
+    <!-- TAB 2: 智慧推薦 Smart Recommendation -->
+    <section id="tab-recommend" class="tab-content">
+      <div class="card">
+        <h3>消費試算與最佳支付推薦</h3>
+        <div class="form-group">
+          <label>是否支援 PayPay？</label>
+          <div class="segmented-control">
+            <button class="segment-btn active" data-paypay="true" onclick="setRecommendPayPay(true)">是 (PayPay)</button>
+            <button class="segment-btn" data-paypay="false" onclick="setRecommendPayPay(false)">否 (海外實體)</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>預計消費金額</label>
+          <div class="input-with-select">
+            <input type="number" id="rec-amount" placeholder="輸入金額" value="3000" oninput="calculateRecommendation()">
+            <select id="rec-currency" onchange="calculateRecommendation()">
+              <option value="JPY">JPY (日幣)</option>
+              <option value="TWD">TWD (台幣)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="recommend-result-box" id="rec-result-box">
+          <div class="rec-card-tag">最佳推薦</div>
+          <h2 id="rec-card-name">-</h2>
+          <div class="rec-amount-info">
+            約合台幣：<strong id="rec-twd-amount">NT$ 0</strong>
+          </div>
+          <p id="rec-card-reason" class="rec-reason-text"></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: 歷史紀錄 Transactions -->
+    <section id="tab-history" class="tab-content">
+      <div class="section-header-flex">
+        <h3 class="section-title">消費明細</h3>
+        <span id="history-count" class="badge-count">0 筆</span>
+      </div>
+      <div id="history-list" class="cards-stack">
+        <!-- JS 動態渲染歷史紀錄 -->
+      </div>
+    </section>
+
+    <!-- TAB 4: 統計與設定 Stats & Settings -->
+    <section id="tab-settings" class="tab-content">
+      <!-- 統計總覽 -->
+      <div class="card">
+        <h3>統計總覽</h3>
+        <div class="stats-grid">
+          <div class="stat-item">
+            <span class="stat-label">累積刷卡總額</span>
+            <span class="stat-value" id="stat-total-spent">NT$ 0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">累積已獲回饋</span>
+            <span class="stat-value highlight" id="stat-total-earned">NT$ 0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">本月已刷金額</span>
+            <span class="stat-value" id="stat-month-spent">NT$ 0</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">本季已刷金額</span>
+            <span class="stat-value" id="stat-quarter-spent">NT$ 0</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 參數設定 -->
+      <div class="card">
+        <h3>匯率與活動設定</h3>
+        <div class="form-group">
+          <label>日幣匯率 (1 JPY = ? TWD)</label>
+          <input type="number" step="0.001" id="cfg-rate" value="0.20">
+        </div>
+        <div class="form-group">
+          <label>iPASS MONEY 加碼門檻 (TWD)</label>
+          <input type="number" id="cfg-ipass-limit" value="2000">
+        </div>
+        <div class="form-group">
+          <label>全支付加碼門檻 (TWD)</label>
+          <input type="number" id="cfg-pxpay-limit" value="3000">
+        </div>
+        <div class="form-group">
+          <label>中信 uniopen 上限 (TWD)</label>
+          <input type="number" id="cfg-uni-limit" value="6250">
+        </div>
+        <div class="form-group">
+          <label>富邦 J 卡上限 (TWD)</label>
+          <input type="number" id="cfg-fubon-limit" value="33333">
+        </div>
+        <button class="btn-secondary" onclick="saveSettings()">儲存設定</button>
+      </div>
+
+      <!-- 資料管理 -->
+      <div class="card">
+        <h3>資料備份與重置</h3>
+        <div class="button-group">
+          <button class="btn-outline" onclick="exportData()">匯出 JSON 備份</button>
+          <label class="btn-outline file-label">
+            匯入 JSON 備份
+            <input type="file" id="import-file" accept=".json" onchange="importData(event)" hidden>
+          </label>
+          <button class="btn-danger" onclick="resetAllData()">一鍵重設所有資料</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- iOS Modal Sheet: 新增消費 -->
+  <div id="modal-add" class="modal-overlay">
+    <div class="modal-sheet">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <h2>新增消費</h2>
+        <button class="btn-close" onclick="closeAddModal()">✕</button>
+      </div>
+
+      <form id="add-tx-form" onsubmit="handleAddTransaction(event)">
+        <div class="form-group">
+          <label>日期</label>
+          <input type="date" id="tx-date" required>
+        </div>
+
+        <div class="form-group">
+          <label>店家名稱</label>
+          <input type="text" id="tx-merchant" placeholder="例如：Bic Camera / Lawson" required>
+        </div>
+
+        <div class="form-group">
+          <label>金額與幣別</label>
+          <div class="input-with-select">
+            <input type="number" id="tx-amount" step="1" placeholder="金額" required oninput="updateConvertedPreview()">
+            <select id="tx-currency" onchange="updateConvertedPreview()">
+              <option value="JPY">JPY (日幣)</option>
+              <option value="TWD">TWD (台幣)</option>
+            </select>
+          </div>
+          <div class="form-hint" id="tx-converted-preview">約合台幣：NT$ 0</div>
+        </div>
+
+        <div class="form-group">
+          <label>付款方式</label>
+          <select id="tx-payment" required>
+            <option value="ipass">iPASS MONEY (PayPay)</option>
+            <option value="pxpay">全支付 (PayPay)</option>
+            <option value="taishin">台新 Pay+ (PayPay)</option>
+            <option value="uniopen">中信 uniopen (實體刷卡)</option>
+            <option value="fubon_j">富邦 J 卡 (實體刷卡)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>備註</label>
+          <input type="text" id="tx-note" placeholder="可選填，例如：買藥妝、家電">
+        </div>
+
+        <button type="submit" class="btn-primary">儲存消費紀錄</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- iOS Bottom Tab Bar -->
+  <nav class="tab-bar">
+    <button class="tab-item active" onclick="switchTab('dashboard')">
+      <svg class="tab-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+      <span>儀表板</span>
+    </button>
+    <button class="tab-item" onclick="switchTab('recommend')">
+      <svg class="tab-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+      <span>智慧推薦</span>
+    </button>
+    <button class="tab-item" onclick="switchTab('history')">
+      <svg class="tab-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9z"/></svg>
+      <span>明細</span>
+    </button>
+    <button class="tab-item" onclick="switchTab('settings')">
+      <svg class="tab-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+      <span>統計設定</span>
+    </button>
+  </nav>
+
+  <script src="script.js"></script>
+</body>
+</html>
